@@ -1,0 +1,6 @@
+{
+  "name": "KuroNet",
+  "description": "Minimalist Japanese-inspired network latency diagnostic tool, global DNS benchmark, and clean IP scanner for circumvention and low latency.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
