@@ -19,10 +19,8 @@ import com.example.data.repository.NetworkStatusInfo
 import com.example.diagnostic.CleanIpScannerEngine
 import com.example.diagnostic.DnsBenchmarkEngine
 import com.example.diagnostic.ScanProgress
-import com.example.diagnostic.SocketPingHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +29,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicInteger
 
 enum class DnsSortOption(val label: String) {
     BEST_SCORE("Best Score"),
@@ -51,10 +50,12 @@ data class DnsUiState(
 
 data class CleanIpScanState(
     val isScanning: Boolean = false,
-    val selectedProvider: String = "Cloudflare",
+    val selectedProvider: String = "All Providers",
     val selectedPort: Int = 443,
     val selectedCidr: String = "104.16.0.0/12",
-    val scanMode: String = "Quick Scan", // "Quick Scan", "Subnet Scan", "Custom"
+    val scanMode: String = "SenPai Pool (2800+)", // "SenPai Pool (2800+)", "Subnet Scan", "Custom ips.txt"
+    val scanTargetCount: Int = 100, // 50, 100, 250, 500, 1000, 2865
+    val customTargetsText: String = "",
     val progress: ScanProgress = ScanProgress("", 0, 0, 0, false),
     val discoveredIps: List<CleanIpItem> = emptyList(),
     val bestCleanIp: CleanIpItem? = null
@@ -65,7 +66,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getInstance(application)
     private val repository = NetworkRepository(db.appDao(), application)
     private val dnsEngine = DnsBenchmarkEngine()
-    private val cleanIpEngine = CleanIpScannerEngine()
+    val cleanIpEngine = CleanIpScannerEngine()
 
     // Offline data flows
     val cachedDns: StateFlow<List<DnsCacheEntity>> = repository.allDnsCache
@@ -104,7 +105,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         _dnsState.value = _dnsState.value.copy(results = initialList)
 
-        // If we have cached offline results in Room, pre-populate them
         viewModelScope.launch {
             cachedDns.collect { cacheList ->
                 if (cacheList.isNotEmpty() && _dnsState.value.results.all { it.status == ServerStatus.UNTESTED }) {
@@ -154,7 +154,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         benchmarkJob = viewModelScope.launch(Dispatchers.Default) {
             _dnsState.value = _dnsState.value.copy(isTestingAll = true)
             val currentList = _dnsState.value.results.toMutableList()
-            val semaphore = Semaphore(4) // Concurrency of 4
+            val semaphore = Semaphore(4)
 
             val updatedResults = mutableListOf<DnsResult>()
 
@@ -165,7 +165,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val tested = dnsEngine.testServer(item.server)
                         synchronized(updatedResults) {
                             updatedResults.add(tested)
-                            // Update live in state
                             val updatedList = _dnsState.value.results.map {
                                 if (it.server.id == tested.server.id) tested else it
                             }
@@ -191,7 +190,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 lastBenchmarkTime = System.currentTimeMillis()
             )
 
-            // Persist to Room for offline access
             repository.saveDnsResults(_dnsState.value.results)
         }
     }
@@ -216,16 +214,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Clean IP Scanner Controls
     fun setScanProvider(provider: String) {
-        val cidr = when (provider) {
-            "Cloudflare" -> "104.16.0.0/12"
-            "Gcore" -> "92.223.0.0/16"
-            "ArvanCloud" -> "185.143.232.0/22"
-            else -> "104.16.0.0/12"
-        }
+        val cidr = KnownCdnRanges.cdnRanges.firstOrNull { it.provider == provider }?.cidr ?: "104.16.0.0/12"
         _cleanIpState.value = _cleanIpState.value.copy(
             selectedProvider = provider,
             selectedCidr = cidr
         )
+    }
+
+    fun scanAllTogether() {
+        setScanProvider("All Providers")
+        startCleanIpScan()
     }
 
     fun setScanPort(port: Int) {
@@ -240,6 +238,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _cleanIpState.value = _cleanIpState.value.copy(scanMode = mode)
     }
 
+    fun setScanTargetCount(count: Int) {
+        _cleanIpState.value = _cleanIpState.value.copy(scanTargetCount = count)
+    }
+
+    fun setCustomTargetsText(text: String) {
+        _cleanIpState.value = _cleanIpState.value.copy(customTargetsText = text)
+    }
+
     fun startCleanIpScan() {
         if (_cleanIpState.value.isScanning) return
         scanJob?.cancel()
@@ -249,11 +255,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val port = _cleanIpState.value.selectedPort
             val mode = _cleanIpState.value.scanMode
             val cidr = _cleanIpState.value.selectedCidr
+            val targetCount = _cleanIpState.value.scanTargetCount
 
-            val candidates = if (mode == "Quick Scan") {
-                cleanIpEngine.getQuickScanCandidates(provider)
-            } else {
-                cleanIpEngine.generateIpsForSubnet(cidr, count = 28)
+            val candidates = when (mode) {
+                "Custom ips.txt" -> {
+                    cleanIpEngine.parseCustomIpText(_cleanIpState.value.customTargetsText)
+                }
+                "Subnet Scan" -> {
+                    cleanIpEngine.generateIpsForSubnet(cidr, count = targetCount.coerceAtMost(250))
+                }
+                else -> {
+                    // SenPai Pool (2800+)
+                    cleanIpEngine.getSenPaiCandidates(getApplication(), provider, targetCount)
+                }
+            }
+
+            if (candidates.isEmpty()) {
+                _cleanIpState.value = _cleanIpState.value.copy(isScanning = false)
+                return@launch
             }
 
             _cleanIpState.value = _cleanIpState.value.copy(
@@ -263,30 +282,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             val discovered = mutableListOf<CleanIpItem>()
-            val semaphore = Semaphore(3) // Concurrency of 3 for socket scans
+            val processedCount = AtomicInteger(0)
+            val semaphore = Semaphore(8) // Concurrency of 8 workers
 
-            candidates.forEachIndexed { index, ip ->
-                _cleanIpState.value = _cleanIpState.value.copy(
-                    progress = _cleanIpState.value.progress.copy(
-                        currentIp = ip,
-                        scannedCount = index + 1
-                    )
-                )
+            val jobs = candidates.map { ip ->
+                launch {
+                    semaphore.withPermit {
+                        if (!_cleanIpState.value.isScanning) return@withPermit
 
-                val tested = cleanIpEngine.testSingleIp(ip, port, provider)
-                if (tested.isClean) {
-                    discovered.add(tested)
-                    discovered.sortBy { it.latencyMs }
-                    _cleanIpState.value = _cleanIpState.value.copy(
-                        discoveredIps = discovered.toList(),
-                        bestCleanIp = discovered.firstOrNull(),
-                        progress = _cleanIpState.value.progress.copy(foundCleanCount = discovered.size)
-                    )
-                    // Auto save clean IP to Room database
-                    repository.saveCleanIp(tested, isFavorite = false)
+                        val currentIdx = processedCount.incrementAndGet()
+                        _cleanIpState.value = _cleanIpState.value.copy(
+                            progress = _cleanIpState.value.progress.copy(
+                                currentIp = ip,
+                                scannedCount = currentIdx
+                            )
+                        )
+
+                        val tested = cleanIpEngine.testSingleIp(ip, port, provider)
+                        if (tested.isClean) {
+                            synchronized(discovered) {
+                                discovered.add(tested)
+                                discovered.sortBy { it.latencyMs }
+                                _cleanIpState.value = _cleanIpState.value.copy(
+                                    discoveredIps = discovered.toList(),
+                                    bestCleanIp = discovered.firstOrNull(),
+                                    progress = _cleanIpState.value.progress.copy(foundCleanCount = discovered.size)
+                                )
+                            }
+                            repository.saveCleanIp(tested, isFavorite = false)
+                        }
+                    }
                 }
-                delay(30)
             }
+
+            jobs.forEach { it.join() }
 
             _cleanIpState.value = _cleanIpState.value.copy(
                 isScanning = false,

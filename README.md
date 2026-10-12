@@ -30,8 +30,11 @@
      - *Iran Anti-Sanction & Gaming:* Shecan (`178.22.122.100`), Electro (`78.157.42.101`), 403.online (`10.202.10.202`), Radar Game (`10.202.10.10`), Begzar (`185.55.226.26`).
    - **Intelligent Stability Score:** Algorithms compute a 0–100 score considering latency, jitter, and packet loss, spotlighting the optimal DNS server with one-tap copy for IP and Private DNS (DoT) hostname.
 
-2. **Cloudflare Clean IP / White IP Scanner (境 - Kyou)**
-   - **Censorship & DPI Circumvention:** Scans top Cloudflare Anycast edge CIDRs (`104.16.0.0/12`, `172.64.0.0/13`, `162.159.0.0/16`, `188.114.96.0/20`, `198.41.128.0/17`) as well as Gcore and ArvanCloud.
+2. **Multi-CDN Clean IP / White IP Scanner (境 - Kyou)**
+   - **SenPai Anycast Pool (2,865 Embedded IPs):** Bundles a pre-generated, comprehensive database of **2,865 Anycast IPs** mirroring `MatinSenPai/SenPaiScanner` across Cloudflare (`104.16 - 104.27`, `172.64 - 172.71`, `162.158`, `162.159`, `198.41`, `188.114`, `141.101`, `108.162`, `173.245`, `103.21`), Fastly, Gcore, AWS CloudFront, Akamai, BunnyCDN, and ArvanCloud.
+   - **Customizable Scan Batch Limits:** Flexible batch sweeping with selectable limits: `50`, `100`, `250`, `500`, `1,000`, or `All 2,865 IPs` with high-concurrency asynchronous coroutines.
+   - **Custom `ips.txt` Input:** Import and paste your own custom IP lists or CIDRs directly into the app.
+   - **All Providers Scanning:** One-tap scan across all CDN providers simultaneously ("Scan All Providers Together"), or filter by specific CDN.
    - **Port Inspection:** Tests TLS ports `443`, `80`, and `2408` (WARP/WireGuard).
    - **Zero Packet Loss Verification:** Filters out throttled/blackholed IPs, isolating verified clean endpoints with 0% loss.
    - **Instant Config Export:** Directly exports discovered IPs formatted for:
@@ -99,8 +102,11 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
      - دی‌ان‌اس‌های ضدتحریم و گیمینگ ایران: **شکن (Shecan)**، **الکترو (Electro)**، **۴۰۳ (403.online)**، **رادار گیم (Radar)** و **بگذر (Begzar)**.
    - **امتیازدهی هوشمند (Stability Score):** انتخاب بهترین دی‌ان‌اس بر اساس پایداری واقعی و کپی سریع آدرس یا Private DNS (DoT) تنها با یک لمس.
 
-2. **اسکنر آی‌پی تمیز کلودفلر برای دور زدن فیلترینگ (بخش 境)**
-   - **مخصوص اینترنت ایران:** اسکن هوشمند رنج‌های معروف Anycast کلودفلر (`104.16.x.x`, `172.64.x.x`, `162.159.x.x`, `188.114.x.x`, `198.41.x.x`)، جی‌کور (Gcore) و ابرآروان.
+2. **اسکنر آی‌پی تمیز چند شبکه‌ای (Multi-CDN Clean IP - بخش 境)**
+   - **بانک جامع ۲٬۸۶۵ آی‌پی برگرفته از SenPaiScanner:** حاوی یک دیتابیس آماده و تعبیه‌شده از **۲٬۸۶۵ آی‌پی تمیز و Anycast** مشابه پروژه `MatinSenPai/SenPaiScanner` در سرتاسر رنج‌های کلودفلر (`104.16` تا `104.27`، `172.64` تا `172.71`، `162.158`، `162.159`، `198.41`، `188.114`، `141.101`، `108.162`، `173.245`، `103.21`)، فستلی، جی‌کور، کلودفرانت، آکامای و بانی‌سی‌دی‌ان.
+   - **تنظیم تعداد اسکن (Batch Limits):** انتخاب حجم اسکن بر اساس نیاز شما: `۵۰`، `۱۰۰`، `۲۵۰`، `۵۰۰`، `۱٬۰۰۰` یا `کل ۲٬۸۶۵ آی‌پی` با پردازش موازی و سریع کوروتین‌ها.
+   - **پشتیبانی از ورود دستی `ips.txt`:** امکان چسباندن (Paste) لیست یا ساب‌نت‌های دلخواه شما.
+   - **اسکن یکپارچه تمام ارائه‌دهنده‌ها (Scan All Together):** امکان اسکن همزمان تمام CDNها با یک کلیک جهت یافتن سریع‌ترین آی‌پی‌های بدون اختلال.
    - **تست پورت‌های حساس:** سنجش هندشیک پورت‌های `443` (HTTPS)، `80` (HTTP) و `2408` (مخصوص وارپ / WireGuard).
    - **فیلتر پکت‌لاس صفر (۰٪):** جداسازی آی‌پی‌هایی که در اپراتورهای همراه اول، ایرانسل و رایتل مسدود یا تراتل (کند) نشده‌اند.
    - **خروجی گرفتن آسان کانفیگ:**

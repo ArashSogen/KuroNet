@@ -5,8 +5,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,9 +27,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -39,13 +37,14 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -84,6 +83,21 @@ import com.example.ui.theme.ZenMuted
 import com.example.ui.theme.ZenWhite
 import com.example.util.HapticUtil
 
+fun getProviderBrandColor(provider: String): Color {
+    return when (provider) {
+        "Cloudflare" -> Color(0xFFF38020)
+        "Fastly" -> Color(0xFFFF334B)
+        "Gcore" -> Color(0xFF2375FF)
+        "CloudFront" -> Color(0xFFFF9900)
+        "Akamai" -> Color(0xFF00A2FF)
+        "BunnyCDN" -> Color(0xFFFF7A00)
+        "ArvanCloud" -> Color(0xFF00A859)
+        "DerakCloud" -> Color(0xFFAB47BC)
+        "CDN77 / CacheFly" -> Color(0xFF26C6DA)
+        else -> LanternAmber
+    }
+}
+
 @Composable
 fun CleanIpScreen(
     viewModel: MainViewModel,
@@ -94,6 +108,7 @@ fun CleanIpScreen(
     val haptic = LocalHapticFeedback.current
 
     var showExportDialog by remember { mutableStateOf<CleanIpItem?>(null) }
+    var showCustomIpsDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -117,9 +132,16 @@ fun CleanIpScreen(
                     HapticUtil.performClickHaptic(haptic)
                     viewModel.setScanCidr(it)
                 },
-                onSelectMode = {
+                onSelectMode = { mode ->
                     HapticUtil.performClickHaptic(haptic)
-                    viewModel.setScanMode(it)
+                    if (mode == "Custom ips.txt") {
+                        showCustomIpsDialog = true
+                    }
+                    viewModel.setScanMode(mode)
+                },
+                onSelectTargetCount = { count ->
+                    HapticUtil.performClickHaptic(haptic)
+                    viewModel.setScanTargetCount(count)
                 },
                 onStartScan = {
                     HapticUtil.performClickHaptic(haptic)
@@ -128,6 +150,10 @@ fun CleanIpScreen(
                 onStopScan = {
                     HapticUtil.performClickHaptic(haptic)
                     viewModel.stopCleanIpScan()
+                },
+                onScanAllTogether = {
+                    HapticUtil.performClickHaptic(haptic)
+                    viewModel.scanAllTogether()
                 }
             )
         }
@@ -139,7 +165,7 @@ fun CleanIpScreen(
             }
         }
 
-        // Best Clean IP Banner
+        // Best Clean IP Banner & Summary
         if (state.discoveredIps.isNotEmpty()) {
             item {
                 DiscoveredSummaryBar(
@@ -147,7 +173,7 @@ fun CleanIpScreen(
                     bestIp = state.bestCleanIp,
                     onCopyAll = {
                         HapticUtil.performClickHaptic(haptic)
-                        val allIps = state.discoveredIps.joinToString("\n") { "${it.ip}:${it.port}" }
+                        val allIps = state.discoveredIps.joinToString("\n") { "${it.ip}:${it.port} [${it.provider}] (${it.latencyMs}ms)" }
                         copyToClipboard(context, allIps, "Copied ${state.discoveredIps.size} Clean IPs")
                     }
                 )
@@ -196,6 +222,20 @@ fun CleanIpScreen(
             }
         )
     }
+
+    // Custom ips.txt Input Dialog
+    if (showCustomIpsDialog) {
+        CustomIpsDialog(
+            initialText = state.customTargetsText,
+            onDismiss = { showCustomIpsDialog = false },
+            onSave = { text ->
+                HapticUtil.performClickHaptic(haptic)
+                viewModel.setCustomTargetsText(text)
+                viewModel.setScanMode("Custom ips.txt")
+                showCustomIpsDialog = false
+            }
+        )
+    }
 }
 
 @Composable
@@ -205,8 +245,10 @@ private fun ScannerConfigCard(
     onSelectPort: (Int) -> Unit,
     onSelectCidr: (String) -> Unit,
     onSelectMode: (String) -> Unit,
+    onSelectTargetCount: (Int) -> Unit,
     onStartScan: () -> Unit,
-    onStopScan: () -> Unit
+    onStopScan: () -> Unit,
+    onScanAllTogether: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -234,10 +276,10 @@ private fun ScannerConfigCard(
                         color = PureWhite
                     )
                     Text(
-                        text = "Iran Censorship & SNI Bypass Edge Scanner",
+                        text = "SenPai Anycast Engine (2,865 IP Pool)",
                         fontFamily = SpaceMonoFontFamily,
                         fontSize = 10.sp,
-                        color = ZenGray
+                        color = ToriiRed
                     )
                 }
             }
@@ -245,39 +287,99 @@ private fun ScannerConfigCard(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Provider Selector
-        Text(
-            text = "PROVIDER",
-            fontFamily = SpaceMonoFontFamily,
-            fontSize = 10.sp,
-            color = ZenMuted
-        )
-        Spacer(modifier = Modifier.height(4.dp))
+        // Quick Action: Scan All Providers Together
+        OutlinedButton(
+            onClick = onScanAllTogether,
+            enabled = !state.isScanning,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = PureWhite
+            ),
+            border = ButtonDefaults.outlinedButtonBorder.copy(
+                brush = androidx.compose.ui.graphics.SolidColor(ToriiRed)
+            ),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.PlayCircle,
+                contentDescription = null,
+                tint = ToriiRed,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "⚡ Scan All Providers Together (${state.scanTargetCount} IPs)",
+                fontFamily = ZenGothicFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                color = PureWhite
+            )
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Providers Selector (Horizontal Scroll with All Providers)
         Row(
             modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "CDN PROVIDER",
+                fontFamily = SpaceMonoFontFamily,
+                fontSize = 10.sp,
+                color = ZenMuted
+            )
+            Text(
+                text = "${KnownCdnRanges.providers.size - 1} CDNs Included",
+                fontFamily = SpaceMonoFontFamily,
+                fontSize = 10.sp,
+                color = ToriiRed
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+
+        val providerScroll = rememberScrollState()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(providerScroll),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Cloudflare", "Gcore", "ArvanCloud").forEach { prov ->
+            KnownCdnRanges.providers.forEach { prov ->
                 val isSelected = state.selectedProvider == prov
+                val brandColor = if (prov == "All Providers") ToriiRed else getProviderBrandColor(prov)
+
                 FilterChip(
                     selected = isSelected,
                     onClick = { onSelectProvider(prov) },
                     label = {
-                        Text(
-                            text = prov,
-                            fontFamily = ZenGothicFontFamily,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            fontSize = 12.sp,
-                            color = if (isSelected) PureWhite else ZenGray
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(brandColor)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = prov,
+                                fontFamily = ZenGothicFontFamily,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 12.sp,
+                                color = if (isSelected) PureWhite else ZenGray
+                            )
+                        }
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = ToriiRed.copy(alpha = 0.2f),
+                        selectedContainerColor = brandColor.copy(alpha = 0.2f),
                         containerColor = SumiCardElevated
                     ),
                     border = FilterChipDefaults.filterChipBorder(
-                        borderColor = if (isSelected) ToriiRed else SumiBorder,
-                        selectedBorderColor = ToriiRed,
+                        borderColor = if (isSelected) brandColor else SumiBorder,
+                        selectedBorderColor = brandColor,
                         enabled = true,
                         selected = isSelected
                     )
@@ -285,7 +387,58 @@ private fun ScannerConfigCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Target IP Pool Limit Chips (50, 100, 250, 500, 1000, 2865)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "SCAN BATCH LIMIT",
+                fontFamily = SpaceMonoFontFamily,
+                fontSize = 10.sp,
+                color = ZenMuted
+            )
+            Text(
+                text = "Pool: 2,865 IPs",
+                fontFamily = SpaceMonoFontFamily,
+                fontSize = 10.sp,
+                color = BambooGreen
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        val limitScroll = rememberScrollState()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(limitScroll),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(50, 100, 250, 500, 1000, 2865).forEach { count ->
+                val isSelected = state.scanTargetCount == count
+                val label = if (count == 2865) "All (2,865)" else "$count IPs"
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (isSelected) ToriiRed.copy(alpha = 0.2f) else SumiCardElevated)
+                        .border(0.5.dp, if (isSelected) ToriiRed else SumiBorder, RoundedCornerShape(6.dp))
+                        .clickable { onSelectTargetCount(count) }
+                        .padding(horizontal = 9.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = label,
+                        fontFamily = SpaceMonoFontFamily,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        fontSize = 11.sp,
+                        color = if (isSelected) PureWhite else ZenGray
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
 
         // Port & Scan Mode Row
         Row(
@@ -310,7 +463,7 @@ private fun ScannerConfigCard(
                                 .background(if (isSelected) ToriiRed.copy(alpha = 0.2f) else SumiCardElevated)
                                 .border(0.5.dp, if (isSelected) ToriiRed else SumiBorder, RoundedCornerShape(6.dp))
                                 .clickable { onSelectPort(port) }
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                .padding(horizontal = 9.dp, vertical = 5.dp)
                         ) {
                             Text(
                                 text = "$port",
@@ -325,7 +478,7 @@ private fun ScannerConfigCard(
             }
 
             // Mode Selector
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1.3f)) {
                 Text(
                     text = "SCAN MODE",
                     fontFamily = SpaceMonoFontFamily,
@@ -333,8 +486,12 @@ private fun ScannerConfigCard(
                     color = ZenMuted
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("Quick Scan", "Subnet Scan").forEach { mode ->
+                val modeScroll = rememberScrollState()
+                Row(
+                    modifier = Modifier.horizontalScroll(modeScroll),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf("SenPai Pool (2800+)", "Subnet Scan", "Custom ips.txt").forEach { mode ->
                         val isSelected = state.scanMode == mode
                         Box(
                             modifier = Modifier
@@ -342,10 +499,14 @@ private fun ScannerConfigCard(
                                 .background(if (isSelected) ToriiRed.copy(alpha = 0.2f) else SumiCardElevated)
                                 .border(0.5.dp, if (isSelected) ToriiRed else SumiBorder, RoundedCornerShape(6.dp))
                                 .clickable { onSelectMode(mode) }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                .padding(horizontal = 8.dp, vertical = 5.dp)
                         ) {
                             Text(
-                                text = mode,
+                                text = when (mode) {
+                                    "SenPai Pool (2800+)" -> "SenPai (2800+)"
+                                    "Custom ips.txt" -> "ips.txt"
+                                    else -> "Subnet"
+                                },
                                 fontFamily = ZenGothicFontFamily,
                                 fontSize = 11.sp,
                                 color = if (isSelected) PureWhite else ZenGray
@@ -360,7 +521,7 @@ private fun ScannerConfigCard(
         if (state.scanMode == "Subnet Scan") {
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "SUBNET CIDR",
+                text = "SUBNET CIDR RANGE",
                 fontFamily = SpaceMonoFontFamily,
                 fontSize = 10.sp,
                 color = ZenMuted
@@ -373,26 +534,40 @@ private fun ScannerConfigCard(
                     .horizontalScroll(scroll),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                KnownCdnRanges.cloudflareRanges
-                    .filter { it.provider == state.selectedProvider }
-                    .forEach { range ->
-                        val isSelected = state.selectedCidr == range.cidr
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (isSelected) ToriiRed.copy(alpha = 0.2f) else SumiCardElevated)
-                                .border(0.5.dp, if (isSelected) ToriiRed else SumiBorder, RoundedCornerShape(6.dp))
-                                .clickable { onSelectCidr(range.cidr) }
-                                .padding(horizontal = 8.dp, vertical = 5.dp)
-                        ) {
+                val availableRanges = if (state.selectedProvider == "All Providers") {
+                    KnownCdnRanges.cdnRanges
+                } else {
+                    KnownCdnRanges.cdnRanges.filter { it.provider == state.selectedProvider }
+                }
+
+                availableRanges.forEach { range ->
+                    val isSelected = state.selectedCidr == range.cidr
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isSelected) ToriiRed.copy(alpha = 0.2f) else SumiCardElevated)
+                            .border(0.5.dp, if (isSelected) ToriiRed else SumiBorder, RoundedCornerShape(6.dp))
+                            .clickable { onSelectCidr(range.cidr) }
+                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                    ) {
+                        Column {
                             Text(
                                 text = range.cidr,
                                 fontFamily = SpaceMonoFontFamily,
                                 fontSize = 10.sp,
                                 color = if (isSelected) PureWhite else ZenGray
                             )
+                            if (state.selectedProvider == "All Providers") {
+                                Text(
+                                    text = range.provider,
+                                    fontFamily = ZenGothicFontFamily,
+                                    fontSize = 8.sp,
+                                    color = ZenMuted
+                                )
+                            }
                         }
                     }
+                }
             }
         }
 
@@ -418,7 +593,7 @@ private fun ScannerConfigCard(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = if (state.isScanning) "Stop Scanner (停止)" else "Scan Clean IPs (白IP探索)",
+                text = if (state.isScanning) "Stop Scanner (停止)" else "Scan ${state.selectedProvider} (${state.scanTargetCount} Targets)",
                 fontFamily = ZenGothicFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp
@@ -448,14 +623,14 @@ private fun ScanProgressSection(state: com.example.ui.CleanIpScanState) {
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = "Probing Edge Handshake...",
+                        text = "Probing Edge Handshake (${state.selectedProvider})...",
                         fontFamily = ZenGothicFontFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
                         color = PureWhite
                     )
                     Text(
-                        text = state.progress.currentIp.ifEmpty { "Resolving CIDR..." },
+                        text = state.progress.currentIp.ifEmpty { "Resolving Edge Targets..." },
                         fontFamily = SpaceMonoFontFamily,
                         fontSize = 11.sp,
                         color = ToriiRed
@@ -548,6 +723,8 @@ private fun CleanIpCard(
     onCopyIp: () -> Unit,
     onExportConfig: () -> Unit
 ) {
+    val brandColor = getProviderBrandColor(item.provider)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -561,7 +738,7 @@ private fun CleanIpCard(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            KanjiBadge(kanji = "白", accentColor = BambooGreen, size = 26.dp, fontSize = 12)
+            KanjiBadge(kanji = "白", accentColor = brandColor, size = 26.dp, fontSize = 12)
             Spacer(modifier = Modifier.width(10.dp))
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -597,12 +774,22 @@ private fun CleanIpCard(
                         color = ZenGray
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = item.provider,
-                        fontFamily = ZenGothicFontFamily,
-                        fontSize = 10.sp,
-                        color = ZenMuted
-                    )
+                    // Provider brand chip
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(brandColor.copy(alpha = 0.15f))
+                            .border(0.5.dp, brandColor.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            text = item.provider,
+                            fontFamily = SpaceMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 9.sp,
+                            color = brandColor
+                        )
+                    }
                 }
             }
         }
@@ -653,7 +840,7 @@ private fun CensorshipBypassInfoCard() {
             KanjiBadge(kanji = "解", accentColor = ToriiRed, size = 26.dp, fontSize = 13)
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "How White/Clean IP Works in Iran",
+                text = "SenPai Anycast Engine (2,865 Edge IPs)",
                 fontFamily = ZenGothicFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 15.sp,
@@ -662,13 +849,67 @@ private fun CensorshipBypassInfoCard() {
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "During national internet disruptions and filtering in Iran, Iranian ISPs (MCI, Irancell, Rightel, Shatel) throttle or blackhole specific Cloudflare Anycast IP ranges. By scanning and discovering 'Clean IPs' that have 0% packet loss and responsive TLS ports (443/2408), you can route your V2Ray, Xray, Sing-box, or Cloudflare WARP proxy directly to these endpoints to bypass censorship smoothly.",
+            text = "KuroNet embeds over 2,800 Anycast IPs mirroring SenPaiScanner across Cloudflare (104.16 - 104.27, 172.64 - 172.71, 162.158, 162.159, 198.41, 188.114, 141.101, 108.162, 173.245), Fastly, Gcore, CloudFront, Akamai, and BunnyCDN. Use 'All Providers' to sweep up to 2,865 IPs concurrently with zero packet loss filtering.",
             fontFamily = ZenGothicFontFamily,
             fontSize = 12.sp,
             lineHeight = 18.sp,
             color = ZenGray
         )
     }
+}
+
+@Composable
+private fun CustomIpsDialog(
+    initialText: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var text by remember { mutableStateOf(initialText) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SumiCardElevated,
+        title = {
+            Text("Import / Paste ips.txt", fontFamily = ZenGothicFontFamily, fontWeight = FontWeight.Bold, color = PureWhite, fontSize = 16.sp)
+        },
+        text = {
+            Column {
+                Text(
+                    text = "Paste IP addresses or CIDRs (one per line):",
+                    fontFamily = SpaceMonoFontFamily,
+                    fontSize = 11.sp,
+                    color = ZenGray
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    placeholder = { Text("104.16.12.1\n162.159.192.1\n172.64.32.1", color = ZenMuted) },
+                    minLines = 6,
+                    maxLines = 10,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = PureWhite,
+                        unfocusedTextColor = PureWhite,
+                        focusedBorderColor = ToriiRed,
+                        unfocusedBorderColor = SumiBorder
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(text) },
+                colors = ButtonDefaults.buttonColors(containerColor = ToriiRed, contentColor = PureWhite)
+            ) {
+                Text("Use Custom IPs")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = ZenGray)
+            }
+        }
+    )
 }
 
 @Composable
@@ -682,7 +923,7 @@ private fun ExportConfigDialog(
 "address": "${cleanIp.ip}",
 "port": 443
     """.trimIndent()
-    val clashNode = "server: ${cleanIp.ip}"
+    val clashNode = "server: ${cleanIp.ip} # ${cleanIp.provider}"
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -703,7 +944,7 @@ private fun ExportConfigDialog(
         text = {
             Column {
                 Text(
-                    text = "Selected IP: ${cleanIp.ip} (${cleanIp.latencyMs}ms)",
+                    text = "Selected: ${cleanIp.ip} (${cleanIp.provider}) • ${cleanIp.latencyMs}ms",
                     fontFamily = SpaceMonoFontFamily,
                     fontSize = 12.sp,
                     color = BambooGreen

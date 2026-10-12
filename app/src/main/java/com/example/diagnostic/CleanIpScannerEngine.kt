@@ -1,9 +1,12 @@
 package com.example.diagnostic
 
+import android.content.Context
 import com.example.data.model.CleanIpItem
 import com.example.data.model.KnownCdnRanges
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import kotlin.random.Random
 
 data class ScanProgress(
@@ -16,23 +19,32 @@ data class ScanProgress(
 
 class CleanIpScannerEngine {
 
+    @Volatile
+    private var cachedSenPaiPool: List<String>? = null
+
     suspend fun testSingleIp(
         ip: String,
         port: Int = 443,
         provider: String = "Cloudflare"
     ): CleanIpItem = withContext(Dispatchers.IO) {
+        val resolvedProvider = if (provider == "All Providers") {
+            KnownCdnRanges.detectProviderForIp(ip)
+        } else {
+            provider
+        }
+
         val probe = SocketPingHelper.runMultipleProbes(
             ip = ip,
             port = port,
             probesCount = 2,
-            timeoutMs = 1500
+            timeoutMs = 1400
         )
 
         val isClean = probe.successfulProbes > 0 && probe.packetLossPercent == 0
         CleanIpItem(
             ip = ip,
             port = port,
-            provider = provider,
+            provider = resolvedProvider,
             latencyMs = probe.avgLatencyMs,
             packetLossPercent = probe.packetLossPercent,
             jitterMs = probe.jitterMs,
@@ -42,7 +54,72 @@ class CleanIpScannerEngine {
         )
     }
 
-    fun generateIpsForSubnet(cidr: String, count: Int = 20): List<String> {
+    fun loadSenPaiIpPool(context: Context): List<String> {
+        cachedSenPaiPool?.let { return it }
+
+        val list = mutableListOf<String>()
+        try {
+            context.assets.open("senpai_ips.txt").use { inputStream ->
+                BufferedReader(InputStreamReader(inputStream)).useLines { lines ->
+                    lines.forEach { line ->
+                        val trimmed = line.trim()
+                        if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
+                            list.add(trimmed)
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Fallback in case of asset read issue
+            list.addAll(KnownCdnRanges.getAllSampleIps())
+        }
+
+        val result = list.distinct()
+        cachedSenPaiPool = result
+        return result
+    }
+
+    fun getSenPaiCandidates(
+        context: Context,
+        provider: String,
+        limit: Int = 100
+    ): List<String> {
+        val pool = loadSenPaiIpPool(context)
+        val filtered = if (provider == "All Providers") {
+            pool
+        } else {
+            pool.filter { ip -> KnownCdnRanges.detectProviderForIp(ip) == provider }
+        }
+
+        val available = if (filtered.isEmpty()) {
+            pool.take(limit)
+        } else {
+            filtered
+        }
+
+        return if (limit >= available.size) {
+            available.shuffled()
+        } else {
+            available.shuffled().take(limit)
+        }
+    }
+
+    fun parseCustomIpText(text: String): List<String> {
+        val ipRegex = Regex("""\b(?:\d{1,3}\.){3}\d{1,3}\b""")
+        val found = mutableListOf<String>()
+        text.lines().forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
+                val match = ipRegex.find(trimmed)
+                if (match != null) {
+                    found.add(match.value)
+                }
+            }
+        }
+        return found.distinct()
+    }
+
+    fun generateIpsForSubnet(cidr: String, count: Int = 40): List<String> {
         val parts = cidr.split("/")
         if (parts.size != 2) return emptyList()
         val baseIp = parts[0]
@@ -54,8 +131,6 @@ class CleanIpScannerEngine {
         val random = Random(System.currentTimeMillis())
 
         if (prefix <= 16) {
-            // E.g. 104.16.0.0/12 or 162.159.0.0/16
-            // Vary 2nd, 3rd and 4th octet
             val bBase = octets[1]
             while (generated.size < count) {
                 val b = if (prefix < 16) bBase + random.nextInt(4) else bBase
@@ -64,14 +139,12 @@ class CleanIpScannerEngine {
                 generated.add("${octets[0]}.$b.$c.$d")
             }
         } else if (prefix <= 20) {
-            // E.g. 188.114.96.0/20
             while (generated.size < count) {
                 val c = octets[2] + random.nextInt(15)
                 val d = random.nextInt(1, 254)
                 generated.add("${octets[0]}.${octets[1]}.$c.$d")
             }
         } else {
-            // /24
             while (generated.size < count) {
                 val d = random.nextInt(1, 254)
                 generated.add("${octets[0]}.${octets[1]}.${octets[2]}.$d")
@@ -79,19 +152,5 @@ class CleanIpScannerEngine {
         }
 
         return generated.toList()
-    }
-
-    fun getQuickScanCandidates(provider: String): List<String> {
-        return when (provider) {
-            "Cloudflare" -> KnownCdnRanges.cloudflareRanges.filter { it.provider == "Cloudflare" }
-                .flatMap { it.sampleIps }
-                .shuffled()
-                .take(24)
-            "Gcore" -> KnownCdnRanges.cloudflareRanges.firstOrNull { it.provider == "Gcore" }
-                ?.sampleIps ?: listOf("92.223.84.1", "92.223.88.2", "92.223.100.5")
-            "ArvanCloud" -> KnownCdnRanges.cloudflareRanges.firstOrNull { it.provider == "ArvanCloud" }
-                ?.sampleIps ?: listOf("185.143.232.1", "185.143.233.2")
-            else -> KnownCdnRanges.getAllSampleIps().take(20)
-        }
     }
 }

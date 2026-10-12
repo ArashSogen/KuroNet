@@ -3,7 +3,7 @@ package com.example
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.DnsResult
-import com.example.data.model.ServerStatus
+import com.example.data.model.KnownCdnRanges
 import com.example.diagnostic.CleanIpScannerEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -40,5 +40,22 @@ class ExampleRobolectricTest {
     ips.forEach { ip ->
       assertTrue(ip.startsWith("104."))
     }
+  }
+
+  @Test
+  fun `verify all providers candidates generation`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val engine = CleanIpScannerEngine()
+    val allCandidates = engine.getSenPaiCandidates(context, "All Providers", limit = 100)
+    assertTrue("Should generate candidates for All Providers", allCandidates.isNotEmpty())
+    assertTrue("Should include multiple providers", KnownCdnRanges.providers.size >= 8)
+  }
+
+  @Test
+  fun `verify senpai pool contains over 1000 ips`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val engine = CleanIpScannerEngine()
+    val pool = engine.loadSenPaiIpPool(context)
+    assertTrue("SenPai Pool should have >= 1000 IPs, found ${pool.size}", pool.size >= 1000)
   }
 }
